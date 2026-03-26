@@ -8,35 +8,46 @@ struct CaptureView: View {
     @State private var showInput: Bool = false
     @State private var pulseScale: CGFloat = 1.0
     @State private var showSuccess: Bool = false
-    @State private var xpFlyIn: Bool = false
     @State private var captureTime: Date?
+
+    // Custom timer
+    @State private var showCustomPicker: Bool = false
+    @State private var customPickerHours: Int = 1
+    @State private var customPickerMinutes: Int = 0
+    private let customSentinel: Double = -1.0
 
     private let timeOptions: [(label: String, hours: Double)] = [
         ("30m", 0.5), ("1h", 1.0), ("2h", 2.0), ("4h", 4.0), ("8h", 8.0), ("24h", 24.0)
     ]
+
+    // Effective duration accounting for custom picker
+    private var effectiveHours: Double {
+        guard selectedHours == customSentinel else { return selectedHours }
+        let total = Double(customPickerHours) + Double(customPickerMinutes) / 60.0
+        return max(total, 1.0 / 12.0) // minimum 5 minutes
+    }
+
+    private var customTimeLabel: String {
+        if customPickerHours == 0 { return "\(customPickerMinutes)m" }
+        if customPickerMinutes == 0 { return "\(customPickerHours)h" }
+        return "\(customPickerHours)h\(customPickerMinutes)m"
+    }
 
     var body: some View {
         ZStack {
             Color.triggerBG.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Header
                 headerBar
-
                 Spacer()
-
                 if !showInput {
-                    // Idle state: big pulsing button
                     idleState
                 } else {
-                    // Active capture state
                     captureState
                 }
-
                 Spacer()
             }
 
-            // Success overlay
             if showSuccess {
                 successOverlay
             }
@@ -65,7 +76,6 @@ struct CaptureView: View {
                     .foregroundStyle(Color.triggerLightGray)
             }
             Spacer()
-            // Quick stats
             HStack(spacing: 12) {
                 statPill(icon: "flame.fill", value: "\(store.userStats.currentStreak)", color: .orange)
                 statPill(icon: "bolt.fill", value: "Lv.\(store.userStats.level)", color: Color.triggerOrange)
@@ -102,7 +112,6 @@ struct CaptureView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
 
-            // Big pulsing capture button
             Button {
                 HapticManager.heavy()
                 captureTime = Date()
@@ -111,7 +120,6 @@ struct CaptureView: View {
                 }
             } label: {
                 ZStack {
-                    // Pulse rings
                     Circle()
                         .fill(Color.triggerOrange.opacity(0.15))
                         .frame(width: 140, height: 140)
@@ -120,13 +128,10 @@ struct CaptureView: View {
                         .fill(Color.triggerOrange.opacity(0.08))
                         .frame(width: 170, height: 170)
                         .scaleEffect(pulseScale)
-
-                    // Main circle
                     Circle()
                         .fill(LinearGradient.triggerOrangeGradient)
                         .frame(width: 110, height: 110)
                         .shadow(color: Color.triggerOrange.opacity(0.5), radius: 20, x: 0, y: 8)
-
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 44, weight: .bold))
                         .foregroundStyle(.white)
@@ -154,7 +159,6 @@ struct CaptureView: View {
                         .padding(.horizontal, 4)
                         .padding(.top, 2)
                 }
-
                 TextEditor(text: $reminderText)
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Color.triggerDarkWhite)
@@ -176,46 +180,73 @@ struct CaptureView: View {
             )
             .padding(.horizontal, 24)
 
-            // Voice waveform (shown while recording)
             if speechService.isRecording {
                 VoiceWaveformView(level: speechService.audioLevel)
                     .transition(.opacity.combined(with: .scale))
             }
 
-            // Time picker
+            // Time picker row
             VStack(spacing: 8) {
-                Text("Erinnerung in")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.triggerLightGray)
+                HStack {
+                    Text("Erinnerung in")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.triggerLightGray)
+                    Spacer()
+                    // Show resolved time when custom is active
+                    if selectedHours == customSentinel {
+                        Text(formattedSelectedTime)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.triggerOrange)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.horizontal, 24)
 
-                HStack(spacing: 8) {
-                    ForEach(timeOptions, id: \.hours) { option in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(timeOptions, id: \.hours) { option in
+                            TimeChip(
+                                label: option.label,
+                                isSelected: selectedHours == option.hours
+                            ) {
+                                HapticManager.light()
+                                withAnimation(.spring(response: 0.25)) {
+                                    selectedHours = option.hours
+                                    showCustomPicker = false
+                                }
+                            }
+                        }
+                        // Custom chip
                         TimeChip(
-                            label: option.label,
-                            isSelected: selectedHours == option.hours
+                            label: selectedHours == customSentinel ? customTimeLabel : "⏱",
+                            isSelected: selectedHours == customSentinel,
+                            isCustom: true
                         ) {
                             HapticManager.light()
-                            withAnimation(.spring(response: 0.25)) {
-                                selectedHours = option.hours
+                            withAnimation(.spring(response: 0.3)) {
+                                selectedHours = customSentinel
+                                showCustomPicker = true
                             }
                         }
                     }
+                    .padding(.horizontal, 24)
                 }
             }
-            .padding(.horizontal, 24)
+
+            // Inline custom time picker
+            if showCustomPicker {
+                customTimePicker
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             // Action buttons
             HStack(spacing: 12) {
-                // Voice button
-                Button {
-                    handleVoiceToggle()
-                } label: {
+                Button { handleVoiceToggle() } label: {
                     ZStack {
                         Circle()
                             .fill(speechService.isRecording ? Color.triggerOrange : Color.triggerCard)
                             .frame(width: 56, height: 56)
                             .overlay(Circle().strokeBorder(Color.triggerCardBorder, lineWidth: 0.5))
-
                         Image(systemName: speechService.isRecording ? "stop.fill" : "mic.fill")
                             .font(.system(size: 22, weight: .bold))
                             .foregroundStyle(speechService.isRecording ? .white : Color.triggerOrange)
@@ -223,10 +254,7 @@ struct CaptureView: View {
                 }
                 .buttonStyle(.plain)
 
-                // FIRE button
-                Button {
-                    fireReminder()
-                } label: {
+                Button { fireReminder() } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 16, weight: .bold))
@@ -254,13 +282,13 @@ struct CaptureView: View {
                 .buttonStyle(.plain)
                 .disabled(reminderText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                // Cancel button
                 Button {
                     HapticManager.light()
                     speechService.stopRecording()
                     withAnimation(.spring(response: 0.35)) {
                         showInput = false
                         reminderText = ""
+                        showCustomPicker = false
                     }
                 } label: {
                     Circle()
@@ -277,6 +305,79 @@ struct CaptureView: View {
             }
             .padding(.horizontal, 24)
         }
+    }
+
+    // MARK: - Custom Time Picker
+
+    private var customTimePicker: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Eigene Zeit")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.triggerLightGray)
+                Spacer()
+                Text(formattedSelectedTime)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.triggerOrange)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            HStack(spacing: 0) {
+                // Hours wheel (0–47)
+                VStack(spacing: 4) {
+                    Text("Stunden")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.triggerLightGray.opacity(0.7))
+                    Picker("", selection: $customPickerHours) {
+                        ForEach(0...47, id: \.self) { h in
+                            Text("\(h)")
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color.triggerDarkWhite)
+                                .tag(h)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(height: 100)
+                    .clipped()
+                }
+                .frame(maxWidth: .infinity)
+
+                // Separator
+                Text(":")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(Color.triggerOrange)
+                    .padding(.bottom, 4)
+
+                // Minutes wheel (0, 5, 10, …, 55)
+                VStack(spacing: 4) {
+                    Text("Minuten")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.triggerLightGray.opacity(0.7))
+                    Picker("", selection: $customPickerMinutes) {
+                        ForEach(Array(stride(from: 0, through: 55, by: 5)), id: \.self) { m in
+                            Text(String(format: "%02d", m))
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color.triggerDarkWhite)
+                                .tag(m)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(height: 100)
+                    .clipped()
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+        }
+        .background(Color.triggerCard)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.triggerOrange.opacity(0.4), lineWidth: 1)
+        )
+        .padding(.horizontal, 24)
     }
 
     // MARK: - Success Overlay
@@ -307,7 +408,6 @@ struct CaptureView: View {
                     .foregroundStyle(Color.triggerLightGray)
                     .multilineTextAlignment(.center)
 
-                // XP gained
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.fill")
                         .foregroundStyle(Color.triggerOrange)
@@ -333,10 +433,17 @@ struct CaptureView: View {
     // MARK: - Helpers
 
     private var formattedSelectedTime: String {
-        if selectedHours < 1 { return "30 Minuten" }
-        if selectedHours == 1 { return "1 Stunde" }
-        if selectedHours < 24 { return "\(Int(selectedHours)) Stunden" }
-        return "24 Stunden"
+        let h = effectiveHours
+        if h < 1 {
+            let mins = Int(h * 60)
+            return "\(mins) Minuten"
+        }
+        let hours = Int(h)
+        let mins = Int((h - Double(hours)) * 60)
+        if mins == 0 {
+            return hours == 1 ? "1 Stunde" : "\(hours) Stunden"
+        }
+        return "\(hours)h \(mins)m"
     }
 
     private func startPulse() {
@@ -359,14 +466,10 @@ struct CaptureView: View {
         let text = reminderText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        let remindAt = Date().addingTimeInterval(selectedHours * 3600)
+        let remindAt = Date().addingTimeInterval(effectiveHours * 3600)
         let usedVoice = speechService.usedVoiceInSession
 
-        // Quick draw achievement: set reminder in < 5 seconds
-        var quickDraw = false
-        if let start = captureTime, Date().timeIntervalSince(start) < 5 {
-            quickDraw = true
-        }
+        let quickDraw = captureTime.map { Date().timeIntervalSince($0) < 5 } ?? false
 
         HapticManager.success()
         speechService.stopRecording()
@@ -383,10 +486,10 @@ struct CaptureView: View {
         withAnimation(.spring(response: 0.35)) {
             showInput = false
             reminderText = ""
+            showCustomPicker = false
             showSuccess = true
         }
 
-        // Auto-dismiss success overlay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
             withAnimation { showSuccess = false }
         }
@@ -398,20 +501,28 @@ struct CaptureView: View {
 struct TimeChip: View {
     let label: String
     let isSelected: Bool
+    var isCustom: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundStyle(isSelected ? .white : Color.triggerLightGray)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(isSelected ? Color.triggerOrange : Color.triggerCard)
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(
-                    isSelected ? Color.clear : Color.triggerCardBorder, lineWidth: 0.5
-                ))
+            HStack(spacing: isCustom && !isSelected ? 3 : 0) {
+                if isCustom && !isSelected {
+                    Image(systemName: "timer")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                Text(label)
+                    .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+            }
+            .foregroundStyle(isSelected ? .white : (isCustom ? Color.triggerOrange : Color.triggerLightGray))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color.triggerOrange : Color.triggerCard)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(
+                isSelected ? Color.clear : (isCustom ? Color.triggerOrange.opacity(0.5) : Color.triggerCardBorder),
+                lineWidth: 0.5
+            ))
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.2), value: isSelected)
@@ -438,8 +549,7 @@ struct VoiceWaveformView: View {
         .onAppear {
             timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { _ in
                 for i in 0..<bars.count {
-                    let rand = CGFloat.random(in: 0.1...1.0)
-                    bars[i] = CGFloat(level) * rand + 0.15
+                    bars[i] = CGFloat(level) * CGFloat.random(in: 0.1...1.0) + 0.15
                 }
             }
         }
@@ -447,7 +557,7 @@ struct VoiceWaveformView: View {
     }
 }
 
-// MARK: - SpeechService extension for session tracking
+// MARK: - SpeechService extension
 
 extension SpeechService {
     var usedVoiceInSession: Bool { !transcribedText.isEmpty }
